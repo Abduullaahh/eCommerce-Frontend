@@ -1,15 +1,16 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { useMutation } from '@apollo/client';
 import { useLocation, useNavigate } from 'react-router-dom';
+import { payments } from '@square/web-sdk';
 import { CHECKOUT } from '../graphql/mutations/checkout';
 
-const Checkout = ({userId}) => {
+const Checkout = ({ userId }) => {
   const [checkout] = useMutation(CHECKOUT);
   const { search } = useLocation();
   const navigate = useNavigate();
   const queryParams = new URLSearchParams(search);
   const cart = JSON.parse(decodeURIComponent(queryParams.get('cart') || '[]'));
-  console.log('Cart data:', cart, userId);
+  const [paymentStatus, setPaymentStatus] = useState('');
 
   // Calculate subtotals and grand total
   const cartWithSubtotals = cart.map(item => ({
@@ -18,9 +19,31 @@ const Checkout = ({userId}) => {
   }));
   const grandTotal = cartWithSubtotals.reduce((total, item) => total + item.subtotal, 0);
 
-  const handleCheckout = async () => {
+  useEffect(() => {
+    const initializePaymentForm = async () => {
+      try {
+        const paymentsInstance = await payments(process.env.REACT_APP_SQUARE_APPLICATION_ID, process.env.REACT_APP_SQUARE_LOCATION_ID);
+        const card = await paymentsInstance.card();
+        await card.attach('#card-container');
+        document.getElementById('card-button').addEventListener('click', async () => {
+          const result = await card.tokenize();
+          if (result.status === 'OK') {
+            handlePaymentMethodSubmission(result.token);
+          } else {
+            setPaymentStatus('Payment failed: ' + result.errors[0].message);
+          }
+        });
+      } catch (error) {
+        console.error('Error initializing payment form:', error);
+        setPaymentStatus('Error initializing payment form');
+      }
+    };
+
+    initializePaymentForm();
+  }, []);
+
+  const handlePaymentMethodSubmission = async (token) => {
     try {
-      // Format cart data to match the schema
       const formattedCart = cartWithSubtotals.map(item => ({
         productId: item.id, // Assuming the product has an 'id' field
         name: item.name,
@@ -34,21 +57,21 @@ const Checkout = ({userId}) => {
           input: {
             userId,
             cart: formattedCart,
-            grandTotal
+            grandTotal,
+            paymentToken: token
           }
         }
       });
+
       if (data.checkout.success) {
+        setPaymentStatus('Payment successful');
         console.log(`Order placed successfully. Order ID: ${data.checkout.orderId}`);
-        // Redirect to home page after successful checkout
         navigate('/Home');
       } else {
-        // Handle unsuccessful checkout
-        console.error(data.checkout.message);
+        setPaymentStatus('Payment failed: ' + data.checkout.message);
       }
     } catch (error) {
-      // Handle error (e.g., show error message)
-      console.error('Checkout failed:', error.message);
+      setPaymentStatus('Payment failed: ' + error.message);
     }
   };
 
@@ -73,7 +96,13 @@ const Checkout = ({userId}) => {
       ) : (
         <p>No products in the cart.</p>
       )}
-      <button onClick={handleCheckout} className="bg-green-500 text-white p-2">Complete Purchase</button>
+      
+      <div id="card-container" className="mt-4"></div>
+      <button id="card-button" className="bg-green-500 text-white p-2 mt-4">Complete Purchase</button>
+      
+      {paymentStatus && <p className="mt-4">{paymentStatus}</p>}
+      
+      {/* <button onClick={handleCheckout} className="bg-green-500 text-white p-2">Complete Purchase</button> */}
     </div>
   );
 };
