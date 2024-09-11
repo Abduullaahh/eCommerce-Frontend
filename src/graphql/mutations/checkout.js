@@ -6,6 +6,7 @@ export const CHECKOUT = gql`
       success
       message
       orderId
+      transactionId
     }
   }
 `;
